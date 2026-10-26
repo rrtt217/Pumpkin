@@ -1,0 +1,66 @@
+name: ARMv6
+
+on:
+  push:
+    branches:
+      - armv6
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ARMV6_XTOOL_ROOT: ${{ github.workspace }}/.armv6-toolchain
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build and verify (Raspberry Pi Zero)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: armv6
+      - name: Install Rust and the ARMv6 target
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add arm-unknown-linux-gnueabihf
+      - name: Fetch cross toolchain and Pi OS sysroot
+        run: ./build/fetch-toolchain.sh
+      - name: Build
+        run: ./build/build-pumpkin.sh -j4
+      - name: Strip
+        run: ./build/strip-armv6.sh
+      - name: Check ELF attributes
+        run: |
+          attrs=$(readelf -A dist/pumpkin-armv6)
+          grep -q 'Tag_CPU_arch: v6' <<< "$attrs"
+          grep -q 'Tag_FP_arch: VFPv2' <<< "$attrs"
+          ! grep -qi 'SIMD' <<< "$attrs"
+      - name: Install qemu
+        run: |
+          . /etc/os-release && echo "runner: $PRETTY_NAME"
+          sudo apt-get update
+          # the package name differs between runner images
+          for pkg in qemu-user-static qemu-user-binfmt qemu-user; do
+            if sudo apt-get install -y "$pkg"; then
+              command -v qemu-arm-static || command -v qemu-arm
+              exit 0
+            fi
+          done
+          apt-cache search qemu | head -20
+          exit 1
+      - name: Verify under qemu (ARM1176)
+        run: ./build/verify-armv6.sh dist/pumpkin-armv6
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pumpkin-armv6
+          path: dist/pumpkin-armv6
+          if-no-files-found: error
+          retention-days: 14

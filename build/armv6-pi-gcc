@@ -1,0 +1,51 @@
+#!/bin/bash
+# ARMv6 (Raspberry Pi Zero / Pi 1) cross compiler wrapper.
+#
+# - Debian trixie amd64 gcc-14 cross driver (unpacked, not installed)
+# - Raspberry Pi OS trixie armhf sysroot (glibc 2.41, ARMv6 + VFPv2 CRT)
+# - -B/-L point at BOTH the sysroot CRT dir and the sysroot's GCC 14 runtime dir,
+#   otherwise the driver falls back to its own ARMv7 start files.
+# - assembler objects get .ARM.attributes stripped: ring's perlasm emits
+#   .arch armv7-a / .fpu neon (dead code at runtime on ARMv6) which would
+#   otherwise tag the final ELF as v7.
+set -u
+
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+X=${ARMV6_XTOOL_ROOT:-$HERE/.armv6-toolchain}
+SYS=$X/sysroot
+BIN=$X/xgcc/usr/bin
+GCC=$BIN/arm-linux-gnueabihf-gcc-14
+OBJCOPY=$BIN/arm-linux-gnueabihf-objcopy
+# cc1 from Debian trixie links against libisl.so.23, newer than Fedora's;
+# the extracted cross binutils need their own libbfd/libopcodes next to it
+export LD_LIBRARY_PATH="$X/xgcc/usr/lib/x86_64-linux-gnu:$X/hostlibs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+out=""
+prev=""
+compile_only=0
+has_asm=0
+for a in "$@"; do
+  if [ "$prev" = "-o" ]; then out=$a; fi
+  case "$a" in
+    -c) compile_only=1 ;;
+    *.S|*.s) has_asm=1 ;;
+  esac
+  prev=$a
+done
+
+"$GCC" \
+  --sysroot="$SYS" \
+  -B"$X/xgcc/usr/libexec/gcc-cross/arm-linux-gnueabihf/14/" \
+  -B"$SYS/usr/lib/gcc/arm-linux-gnueabihf/14/" \
+  -B"$SYS/usr/lib/arm-linux-gnueabihf/" \
+  -L"$SYS/usr/lib/gcc/arm-linux-gnueabihf/14/" \
+  -L"$SYS/usr/lib/arm-linux-gnueabihf/" \
+  -march=armv6 -marm -mfpu=vfp -mfloat-abi=hard \
+  "$@"
+rc=$?
+
+if [ $rc -eq 0 ] && [ $compile_only -eq 1 ] && [ $has_asm -eq 1 ] && [ -n "$out" ] && [ -f "$out" ]; then
+  "$OBJCOPY" --remove-section=.ARM.attributes "$out" 2>/dev/null || true
+fi
+
+exit $rc
