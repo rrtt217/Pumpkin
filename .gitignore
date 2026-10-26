@@ -163,3 +163,7 @@ world_nether/
 world_the_end/
 patchbukkit/
 minecraft-sources*/
+
+# ARMv6 cross-build (see build/)
+/.armv6-toolchain/
+/dist/
